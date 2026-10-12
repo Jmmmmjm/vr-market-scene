@@ -1,0 +1,7 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+*.cs text diff=csharp
+*.unity text merge=unityyamlmerge
+*.prefab text merge=unityyamlmerge
+*.asset text merge=unityyamlmerge
+*.mat text merge=unityyamlmerge

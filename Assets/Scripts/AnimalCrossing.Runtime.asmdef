@@ -1,0 +1,19 @@
+{
+    "name": "AnimalCrossing.Runtime",
+    "rootNamespace": "AnimalCrossing",
+    "references": [
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.XR.Interaction.Toolkit",
+        "Unity.XR.CoreUtils",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

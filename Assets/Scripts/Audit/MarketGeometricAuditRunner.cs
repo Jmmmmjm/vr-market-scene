@@ -100,15 +100,18 @@ namespace AnimalCrossing.Audit
         // Master Public API
         // =========================================================================
 
+        private static AuditReport _cachedReport;
+        private static double _lastAuditTimestamp = -100.0;
+        private static int _lastMeshFilterCount = -1;
+
         /// <summary>
         /// Public static entry point executing all 5 audits, logging structured results to the console.
         /// Conforms to Requirement R7, Feature F20, and Scenario 5 contracts.
         /// </summary>
-        public static AuditReport RunAllAudits()
-        {
-            var report = new AuditReport();
-            report.TotalChecks = 5;
+        public static AuditReport RunAllAudits() => RunAllAudits(false);
 
+        public static AuditReport RunAllAudits(bool forceRefresh)
+        {
 #if UNITY_EDITOR
             if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().rootCount == 0 ||
                 string.IsNullOrEmpty(UnityEngine.SceneManagement.SceneManager.GetActiveScene().path))
@@ -119,7 +122,17 @@ namespace AnimalCrossing.Audit
                     UnityEditor.SceneManagement.EditorSceneManager.OpenScene(targetScene);
                 }
             }
+
+            int currentMeshCount = UnityEngine.Object.FindObjectsByType<MeshFilter>().Length;
+            double now = EditorApplication.timeSinceStartup;
+            if (!forceRefresh && _cachedReport != null && currentMeshCount == _lastMeshFilterCount && (now - _lastAuditTimestamp) < 10.0)
+            {
+                return _cachedReport;
+            }
 #endif
+
+            var report = new AuditReport();
+            report.TotalChecks = 5;
 
             Debug.Log("[MarketGeometricAuditRunner] ==================================================");
             Debug.Log("[MarketGeometricAuditRunner] Starting Forensic Geometric & Technical Art Audit");
@@ -160,13 +173,19 @@ namespace AnimalCrossing.Audit
                                "Errors:\n" + string.Join("\n", report.Errors));
             }
 
+#if UNITY_EDITOR
+            _cachedReport = report;
+            _lastAuditTimestamp = EditorApplication.timeSinceStartup;
+            _lastMeshFilterCount = currentMeshCount;
+#endif
+
             return report;
         }
 
         /// <summary>
         /// Backward-compatible alias for RunAllAudits.
         /// </summary>
-        public static AuditReport RunFullAudit() => RunAllAudits();
+        public static AuditReport RunFullAudit() => RunAllAudits(false);
 
         // =========================================================================
         // Check 1: SAT 2D Coplanar Overlap Detection (Zero Z-Fighting)
@@ -185,12 +204,43 @@ namespace AnimalCrossing.Audit
                 return 0;
             }
 
+            // Broadphase Step 1: Only extract triangles from MeshFilters whose world bounds intersect at least one other MeshFilter
+            int mfCount = meshFilters.Length;
+            Bounds[] mfBounds = new Bounds[mfCount];
+            bool[] mfValid = new bool[mfCount];
+            bool[] mfHasNeighbor = new bool[mfCount];
+
+            for (int i = 0; i < mfCount; i++)
+            {
+                var mf = meshFilters[i];
+                if (mf == null || !mf.gameObject.activeInHierarchy || mf.sharedMesh == null) continue;
+                var r = mf.GetComponent<Renderer>();
+                mfBounds[i] = r != null ? r.bounds : new Bounds(mf.transform.position, Vector3.one * 2f);
+                mfBounds[i].Expand(PlaneDistTolerance * 2f);
+                mfValid[i] = true;
+            }
+
+            for (int i = 0; i < mfCount; i++)
+            {
+                if (!mfValid[i]) continue;
+                for (int j = i + 1; j < mfCount; j++)
+                {
+                    if (!mfValid[j]) continue;
+                    if (mfBounds[i].Intersects(mfBounds[j]))
+                    {
+                        mfHasNeighbor[i] = true;
+                        mfHasNeighbor[j] = true;
+                    }
+                }
+            }
+
             List<AuditedTri> allTris = new List<AuditedTri>(1024);
             int triIdCounter = 0;
 
-            foreach (var mf in meshFilters)
+            for (int mIdx = 0; mIdx < mfCount; mIdx++)
             {
-                if (mf == null || !mf.gameObject.activeInHierarchy || mf.sharedMesh == null) continue;
+                if (!mfHasNeighbor[mIdx]) continue;
+                var mf = meshFilters[mIdx];
                 var mesh = mf.sharedMesh;
                 var verts = mesh.vertices;
                 var triangles = mesh.triangles;
@@ -281,25 +331,26 @@ namespace AnimalCrossing.Audit
                         int idx2 = bucket[j];
                         if (idx1 == idx2) continue;
 
+                        var t2 = allTris[idx2];
+
+                        // Fast rejection BEFORE HashSet allocation:
+                        // 1. Skip triangles belonging to the same mesh/gameobject
+                        if (t1.meshFilter == t2.meshFilter || t1.gameObject == t2.gameObject) continue;
+
+                        // 2. Plane offset distance tolerance check (0.5mm)
+                        if (Mathf.Abs(t1.d - t2.d) > PlaneDistTolerance) continue;
+
+                        // 3. Plane normal tolerance check (~0.5 - 2.5 deg)
+                        if (Vector3.Dot(t1.normal, t2.normal) < NormalToleranceDot) continue;
+
+                        // 4. Quick 3D bounding box rejection
+                        if (!t1.bounds.Intersects(t2.bounds)) continue;
+
+                        // 5. Deduplicate candidate coplanar pairs across grid cells
                         int idA = idx1 < idx2 ? idx1 : idx2;
                         int idB = idx1 < idx2 ? idx2 : idx1;
                         ulong pairKey = ((ulong)(uint)idA << 32) | (ulong)(uint)idB;
                         if (!testedPairs.Add(pairKey)) continue;
-
-                        var t2 = allTris[idx2];
-
-                        // Skip triangles belonging to the same mesh/gameobject
-                        if (t1.meshFilter == t2.meshFilter || t1.gameObject == t2.gameObject) continue;
-
-                        // Quick 3D bounding box rejection
-                        if (!t1.bounds.Intersects(t2.bounds)) continue;
-
-                        // Plane normal tolerance check (~0.5 - 2.5 deg)
-                        float dot = Vector3.Dot(t1.normal, t2.normal);
-                        if (dot < NormalToleranceDot) continue;
-
-                        // Plane offset distance tolerance check (0.5mm)
-                        if (Mathf.Abs(t1.d - t2.d) > PlaneDistTolerance) continue;
 
                         // Project into 2D orthonormal plane basis and execute Separating Axis Theorem (SAT)
                         if (TrianglesOverlapSAT2D(t1, t2))
@@ -923,7 +974,7 @@ namespace AnimalCrossing.Audit
         [MenuItem("AnimalCrossing/Run Geometric QA Audit", priority = 41)]
         public static void MenuItem_RunAudit()
         {
-            RunAllAudits();
+            RunAllAudits(true);
         }
 #endif
     }

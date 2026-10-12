@@ -1,24 +1,18 @@
 #if UNITY_EDITOR
 using System;
-using System.IO;
 using UnityEditor;
 using UnityEngine;
 
 namespace AnimalCrossing.Interaction.Editor
 {
     /// <summary>
-    /// Executes on domain reload to automatically populate and save the complete PC VR Player Rig
-    /// into both AnimalCrossingMarketSquare.unity and SampleScene.unity.
+    /// Explicit one-click batch builder & scene synchronizer.
+    /// (Replaces automatic [InitializeOnLoad] scene switching to ensure instant C# domain reloads).
     /// </summary>
-    [InitializeOnLoad]
     public static class AutoRigAndSceneSaver
     {
-        static AutoRigAndSceneSaver()
-        {
-            EditorApplication.delayCall += ExecuteAutoSetup;
-        }
-
-        private static void ExecuteAutoSetup()
+        [MenuItem("AnimalCrossing/Rebuild and Save All Scenes", priority = 1)]
+        public static void ExecuteAutoSetup()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode || Application.isPlaying) return;
             try
